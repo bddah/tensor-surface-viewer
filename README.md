@@ -1,5 +1,7 @@
 # Tensor Surface Viewer
 
+[Link](https://bddah.github.io/tensor-surface-viewer/)
+
 A browser-based 3D visualization tool for surfaces associated with a second-rank tensor.
 
 The app allows interactive rotation, zooming, and inspection of the tensor surface in 3D.
