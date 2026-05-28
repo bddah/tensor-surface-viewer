@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Tensor Surface Viewer</title>
+  <style>
+    :root{
+      --bg:#eef3f8; --panel:#ffffff; --muted:#5c6b7a; --line:#d8e0ea; --text:#12202f;
+      --accent:#2563eb; --shadow:0 10px 30px rgba(15,23,42,.08);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;color:var(--text);background:var(--bg)}
+    .app{display:grid;grid-template-columns:minmax(320px,390px) 1fr;height:100%}
+    .panel{
+      overflow:auto;background:var(--panel);border-right:1px solid var(--line);
+      padding:18px 18px 22px; box-shadow:var(--shadow); z-index:2;
+    }
+    h1{margin:0 0 8px;font-size:20px}
+    h2{margin:18px 0 10px;font-size:15px}
+    p, .note{margin:8px 0;color:var(--muted)}
+    .row{
+      display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;
+      margin:8px 0;
+    }
+    .row > label:first-child{font-weight:600}
+    .full{grid-template-columns:1fr}
+    select, input[type="number"], button{
+      width:100%; border:1px solid var(--line); border-radius:10px; padding:8px 10px;
+      background:#fff; color:var(--text);
+    }
+    button{
+      cursor:pointer; font-weight:700; background:#f8fbff;
+    }
+    button:hover{border-color:#b8c7d8}
+    .matrix{
+      display:grid; grid-template-columns:repeat(3,1fr); gap:8px; align-items:center;
+    }
+    .matrix input{width:100%; text-align:center}
+    .locked{background:#f3f6fa;color:#8291a1}
+    .matrix-head{
+      display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:6px; color:var(--muted); font-size:12px;
+    }
+    .inline{
+      display:flex; gap:10px; align-items:center;
+    }
+    .inline label{font-weight:600}
+    .check{
+      display:flex; align-items:center; gap:8px; margin:8px 0; color:var(--text);
+    }
+    .check input{width:auto}
+    .out{min-width:46px; text-align:right; font-variant-numeric:tabular-nums;color:var(--muted)}
+    .summary{
+      margin-top:10px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:#fbfdff;
+    }
+    .summary b{font-variant-numeric:tabular-nums}
+    .kbd{
+      font:12px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace; background:#f3f6fa; border:1px solid var(--line);
+      border-radius:6px; padding:1px 6px;
+    }
+    #viewport{position:relative; min-width:0; min-height:0}
+    #viewport canvas{display:block; width:100%; height:100%}
+    .footer-note{font-size:12px;color:var(--muted)}
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel">
+      <h1>Tensor Surface Viewer</h1>
+      <p>Поверхность строится по функции направления <b>q(n)=nᵀTn</b>. Для общего ввода 3×3 визуализируется симметрическая часть <b>S=(T+Tᵀ)/2</b>.</p>
+
+      <h2>Матрица тензора</h2>
+
+      <div class="row">
+        <label for="presetSelect">Тестовый пример</label>
+        <select id="presetSelect">
+          <option value="spd">SPD</option>
+          <option value="repeated">Повторяющиеся собственные значения</option>
+          <option value="indefinite">Неопределённый</option>
+          <option value="general">Общий несимметричный</option>
+          <option value="antisym">Чисто антисимметричный</option>
+        </select>
+        <button id="resetCamera" type="button">Сброс камеры</button>
+      </div>
+
+      <label class="check">
+        <input id="symmetricMode" type="checkbox" checked />
+        Симметричный режим ввода
+      </label>
+
+      <div class="matrix-head">
+        <div>T<sub>11</sub></div><div>T<sub>12</sub></div><div>T<sub>13</sub></div>
+      </div>
+      <div class="matrix" style="margin-bottom:8px">
+        <input id="t00" type="number" step="any" value="3" />
+        <input id="t01" type="number" step="any" value="0.4" />
+        <input id="t02" type="number" step="any" value="0" />
+        <input id="t10" type="number" step="any" value="0.4" class="locked" />
+        <input id="t11" type="number" step="any" value="1.5" />
+        <input id="t12" type="number" step="any" value="0.2" />
+        <input id="t20" type="number" step="any" value="0" class="locked" />
+        <input id="t21" type="number" step="any" value="0.2" class="locked" />
+        <input id="t22" type="number" step="any" value="0.35" />
+      </div>
+
+      <h2>Модель поверхности</h2>
+
+      <div class="row">
+        <label for="surfaceMode">Радиальный режим</label>
+        <select id="surfaceMode">
+          <option value="signed-sqrt" selected>signed-sqrt</option>
+          <option value="signed-linear">signed-linear</option>
+          <option value="abs-linear">abs-linear</option>
+          <option value="sqrt-pos">sqrt-pos</option>
+          <option value="level-set">level-set</option>
+        </select>
+        <span></span>
+      </div>
+
+      <div class="row" id="levelClampRow" style="display:none">
+        <label for="levelClamp">Обрезка level-set</label>
+        <input id="levelClamp" type="range" min="0.5" max="20" step="0.5" value="6" />
+        <span class="out" id="levelClampLabel">6.0</span>
+      </div>
+
+      <div class="row">
+        <label for="globalScale">Масштаб</label>
+        <input id="globalScale" type="range" min="0.10" max="5.00" step="0.05" value="1.00" />
+        <span class="out" id="globalScaleLabel">1.00</span>
+      </div>
+
+      <div class="row">
+        <label for="uSegments">Сегменты по θ</label>
+        <input id="uSegments" type="range" min="32" max="320" step="8" value="160" />
+        <span class="out" id="uSegmentsLabel">160</span>
+      </div>
+
+      <div class="row">
+        <label for="vSegments">Сегменты по φ</label>
+        <input id="vSegments" type="range" min="16" max="160" step="4" value="80" />
+        <span class="out" id="vSegmentsLabel">80</span>
+      </div>
+
+      <h2>Цвет и отображение</h2>
+
+      <div class="row">
+        <label for="colormap">Цветовая карта</label>
+        <select id="colormap">
+          <option value="turbo" selected>turbo-like</option>
+          <option value="viridis">viridis-like</option>
+          <option value="gray">gray</option>
+        </select>
+        <span></span>
+      </div>
+
+      <label class="check">
+        <input id="signedColors" type="checkbox" />
+        Подсвечивать знак (diverging map)
+      </label>
+
+      <label class="check"><input id="showAxes" type="checkbox" checked />Показывать оси</label>
+      <label class="check"><input id="showGrid" type="checkbox" checked />Показывать сетку</label>
+      <label class="check"><input id="showWireframe" type="checkbox" />Показывать каркас</label>
+      <label class="check"><input id="showNormals" type="checkbox" />Показывать нормали</label>
+      <label class="check"><input id="showSections" type="checkbox" checked />Показывать сечения XY/XZ/YZ</label>
+
+      <div class="summary" id="summary"></div>
+      <div class="summary" id="gpuStats">drawCalls=0, triangles=0, lines=0</div>
+
+      <h2>Управление сценой</h2>
+      <p>
+        Вращение — <span class="kbd">ЛКМ</span>,
+        зум — <span class="kbd">колесо</span>,
+        панорамирование — <span class="kbd">ПКМ</span> или <span class="kbd">Shift + ЛКМ</span>.
+      </p>
+      <p class="footer-note">
+        Если выбран режим <b>level-set</b>, отрицательные направления считаются невалидными и в поверхности остаются только области, где q(n)&gt;0.
+      </p>
+    </aside>
+
+    <div id="viewport"></div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
+    import WebGL from 'three/addons/capabilities/WebGL.js';
+
+    const TAU = Math.PI * 2;
+    const EPS = 1e-8;
+    const ids = [['t00','t01','t02'],['t10','t11','t12'],['t20','t21','t22']];
+    const symmetricPairs = [['t01','t10'],['t02','t20'],['t12','t21']];
+
+    const ramps = {
+      turbo: [0x30123b,0x4145ab,0x4675ed,0x39a8fa,0x1bcfd4,0x46df7b,0xa7e335,0xf9d548,0xf29e2e,0xd14a1f,0x7a0403],
+      viridis: [0x440154,0x482878,0x3e4a89,0x31688e,0x26828e,0x1f9e89,0x35b779,0x6ece58,0xb5de2b,0xfee825],
+      gray: [0x111111,0xffffff],
+      diverging: [0x313695,0x4575b4,0x74add1,0xabd9e9,0xe0f3f8,0xf7f7f7,0xfee090,0xfdae61,0xf46d43,0xd73027,0xa50026]
+    };
+
+    const presets = {
+      spd: { symmetric:true, T:[[3,0.4,0],[0.4,1.5,0.2],[0,0.2,0.35]] },
+      repeated: { symmetric:true, T:[[2,0,0],[0,2,0],[0,0,0.5]] },
+      indefinite: { symmetric:true, T:[[2,0.25,0],[0.25,-1,0],[0,0,-3]] },
+      general: { symmetric:false, T:[[2,3,0],[-1,1,4],[0,2,-2]] },
+      antisym: { symmetric:false, T:[[0,1,0],[-1,0,0],[0,0,0]] }
+    };
+
+    const state = {
+      root: new THREE.Group(),
+      mesh: null,
+      edgeLines: null,
+      normalsHelper: null,
+      sectionsGroup: null,
+      boundsRadius: 1,
+      firstBuild: true
+    };
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf4f7fb);
+    scene.add(state.root);
+
+    const viewport = document.getElementById('viewport');
+    if (!WebGL.isWebGL2Available()) {
+      viewport.appendChild(WebGL.getWebGL2ErrorMessage());
+      throw new Error('WebGL2 is required by this example.');
+    }
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 500);
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    viewport.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 0.1;
+    controls.maxDistance = 250;
+    controls.target.set(0,0,0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const dir1 = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir1.position.set(4,5,7);
+    scene.add(dir1);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 0.55);
+    dir2.position.set(-5,-2,-4);
+    scene.add(dir2);
+
+    const grid = new THREE.GridHelper(20,20,0x7b8ba3,0xc8d0db);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.45;
+    scene.add(grid);
+
+    const axes = new THREE.AxesHelper(2.5);
+    scene.add(axes);
+
+    let renderRequested = false;
+
+    function requestRenderIfNotRequested() {
+      if (!renderRequested) {
+        renderRequested = true;
+        requestAnimationFrame(render);
+      }
+    }
+
+    function resizeRendererToDisplaySize() {
+      const width = viewport.clientWidth;
+      const height = viewport.clientHeight;
+      const needResize =
+        renderer.domElement.width !== Math.floor(width * renderer.getPixelRatio()) ||
+        renderer.domElement.height !== Math.floor(height * renderer.getPixelRatio());
+      if (needResize) {
+        renderer.setSize(width, height, false);
+        camera.aspect = width / Math.max(1, height);
+        camera.updateProjectionMatrix();
+      }
+    }
+
+    function render() {
+      renderRequested = false;
+      resizeRendererToDisplaySize();
+      controls.update();
+      if (state.normalsHelper) state.normalsHelper.update();
+      renderer.render(scene, camera);
+      document.getElementById('gpuStats').textContent =
+        `drawCalls=${renderer.info.render.drawCalls}, triangles=${renderer.info.render.triangles}, lines=${renderer.info.render.lines}`;
+    }
+
+    controls.addEventListener('change', requestRenderIfNotRequested);
+    window.addEventListener('resize', requestRenderIfNotRequested);
+
+    function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+
+    function lerpColor(hexA, hexB, t, outColor) {
+      const a = new THREE.Color(hexA);
+      const b = new THREE.Color(hexB);
+      outColor.copy(a).lerp(b, t);
+      return outColor;
+    }
+
+    function sampleRamp(name, t, outColor = new THREE.Color()) {
+      const ramp = ramps[name] || ramps.turbo;
+      if (ramp.length === 1) return outColor.setHex(ramp[0]);
+      const x = clamp01(t) * (ramp.length - 1);
+      const i = Math.floor(x);
+      const f = x - i;
+      return lerpColor(ramp[i], ramp[Math.min(i + 1, ramp.length - 1)], f, outColor);
+    }
+
+    function readNumber(id) {
+      const v = Number(document.getElementById(id).value);
+      return Number.isFinite(v) ? v : 0;
+    }
+
+    function writeMatrix(matrix) {
+      for (let i=0;i<3;i++) for (let j=0;j<3;j++) document.getElementById(ids[i][j]).value = matrix[i][j];
+    }
+
+    function readMatrix() {
+      return [
+        [readNumber('t00'), readNumber('t01'), readNumber('t02')],
+        [readNumber('t10'), readNumber('t11'), readNumber('t12')],
+        [readNumber('t20'), readNumber('t21'), readNumber('t22')]
+      ];
+    }
+
+    function symmetricPart(T) {
+      return [
+        [T[0][0], 0.5*(T[0][1]+T[1][0]), 0.5*(T[0][2]+T[2][0])],
+        [0.5*(T[1][0]+T[0][1]), T[1][1], 0.5*(T[1][2]+T[2][1])],
+        [0.5*(T[2][0]+T[0][2]), 0.5*(T[2][1]+T[1][2]), T[2][2]]
+      ];
+    }
+
+    function antisymmetricNorm(T) {
+      const a01 = 0.5*(T[0][1]-T[1][0]);
+      const a02 = 0.5*(T[0][2]-T[2][0]);
+      const a12 = 0.5*(T[1][2]-T[2][1]);
+      return Math.hypot(a01,a02,a12);
+    }
+
+    function evaluateQuadratic(S, x, y, z) {
+      return x*(S[0][0]*x + S[0][1]*y + S[0][2]*z)
+           + y*(S[1][0]*x + S[1][1]*y + S[1][2]*z)
+           + z*(S[2][0]*x + S[2][1]*y + S[2][2]*z);
+    }
+
+    function radiusInfoFromQ(q, mode) {
+      switch (mode) {
+        case 'signed-linear': return { valid:true, radius:q };
+        case 'abs-linear': return { valid:true, radius:Math.abs(q) };
+        case 'signed-sqrt': return { valid:true, radius:Math.sign(q)*Math.sqrt(Math.abs(q)) };
+        case 'sqrt-pos': return q > EPS ? { valid:true, radius:Math.sqrt(q) } : { valid:false, radius:0 };
+        case 'level-set': {
+          if (q <= EPS) return { valid:false, radius:0 };
+          const limit = Number(document.getElementById('levelClamp').value) || 6;
+          return { valid:true, radius:Math.min(limit, 1/Math.sqrt(q)) };
+        }
+        default: return { valid:true, radius:q };
+      }
+    }
+
+    function colorForValue(q, maxAbs, colorMode) {
+      const c = new THREE.Color();
+      if (colorMode === 'signed') {
+        const t = maxAbs > EPS ? 0.5 + 0.5*(q/maxAbs) : 0.5;
+        return sampleRamp('diverging', t, c);
+      }
+      const cmap = document.getElementById('colormap').value;
+      const t = maxAbs > EPS ? Math.abs(q)/maxAbs : 0;
+      return sampleRamp(cmap, t, c);
+    }
+
+    function disposeMaterial(material) {
+      if (!material) return;
+      if (Array.isArray(material)) { material.forEach(disposeMaterial); return; }
+      if (typeof material.dispose === 'function') material.dispose();
+    }
+
+    function clearCurrentObjects() {
+      for (const key of ['mesh','edgeLines','normalsHelper','sectionsGroup']) {
+        const obj = state[key];
+        if (!obj) continue;
+        if (obj.parent) obj.parent.remove(obj);
+        obj.traverse?.((node) => {
+          if (node.geometry && typeof node.geometry.dispose === 'function') node.geometry.dispose();
+          if (node.material) disposeMaterial(node.material);
+        });
+        if (typeof obj.dispose === 'function') {
+          try { obj.dispose(); } catch (_) {}
+        }
+        state[key] = null;
+      }
+    }
+
+    function fitCamera(radius) {
+      const r = Math.max(0.3, radius);
+      const distance = r * 3.5;
+      camera.near = Math.max(0.01, distance / 500);
+      camera.far = Math.max(100, distance * 25);
+      camera.position.set(distance, distance*0.8, distance);
+      camera.updateProjectionMatrix();
+      controls.target.set(0,0,0);
+      controls.update();
+    }
+
+    function buildSectionLine(S, mode, globalScale, plane, color) {
+      const points = [];
+      const segments = 360;
+      for (let i=0;i<segments;i++) {
+        const a = (i/segments) * TAU;
+        let x=0,y=0,z=0;
+        if (plane === 'xy') { x=Math.cos(a); y=Math.sin(a); z=0; }
+        else if (plane === 'xz') { x=Math.cos(a); y=0; z=Math.sin(a); }
+        else { x=0; y=Math.cos(a); z=Math.sin(a); }
+        const q = evaluateQuadratic(S, x, y, z);
+        const info = radiusInfoFromQ(q, mode);
+        if (!info.valid) continue;
+        points.push(new THREE.Vector3(globalScale*x*info.radius, globalScale*y*info.radius, globalScale*z*info.radius));
+      }
+      if (points.length < 2) return null;
+      const geom = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({ color, transparent:true, opacity:0.9 });
+      return new THREE.LineLoop(geom, mat);
+    }
+
+    function buildGeometryAndScene() {
+      const T = readMatrix();
+      const S = symmetricPart(T);
+      const mode = document.getElementById('surfaceMode').value;
+      const colorMode = document.getElementById('signedColors').checked ? 'signed' : 'magnitude';
+      const uSeg = Math.max(16, Number(document.getElementById('uSegments').value) || 160);
+      const vSeg = Math.max(8, Number(document.getElementById('vSegments').value) || 80);
+      const globalScale = Number(document.getElementById('globalScale').value) || 1;
+
+      const positions = [];
+      const colors = [];
+      const indices = [];
+      const valid = [];
+      const qValues = [];
+      let minQ = Infinity, maxQ = -Infinity, maxAbsQ = 0;
+
+      for (let iy=0; iy<=vSeg; iy++) {
+        const v = iy / vSeg;
+        const phi = v * Math.PI;
+        const sp = Math.sin(phi), cp = Math.cos(phi);
+        for (let ix=0; ix<=uSeg; ix++) {
+          const u = ix / uSeg;
+          const theta = u * TAU;
+          const ct = Math.cos(theta), st = Math.sin(theta);
+          const x = sp*ct, y = cp, z = sp*st;
+          const q = evaluateQuadratic(S, x, y, z);
+          const info = radiusInfoFromQ(q, mode);
+
+          minQ = Math.min(minQ, q);
+          maxQ = Math.max(maxQ, q);
+          maxAbsQ = Math.max(maxAbsQ, Math.abs(q));
+          valid.push(info.valid);
+          qValues.push(q);
+
+          const r = info.radius;
+          positions.push(globalScale*x*r, globalScale*y*r, globalScale*z*r);
+          colors.push(0,0,0);
+        }
+      }
+
+      for (let iy=0; iy<vSeg; iy++) {
+        for (let ix=0; ix<uSeg; ix++) {
+          const a = iy*(uSeg+1)+ix;
+          const b = a+1;
+          const c = a+(uSeg+1);
+          const d = c+1;
+          if (valid[a] && valid[c] && valid[b]) indices.push(a,c,b);
+          if (valid[b] && valid[c] && valid[d]) indices.push(b,c,d);
+        }
+      }
+
+      for (let i=0; i<qValues.length; i++) {
+        const col = colorForValue(qValues[i], maxAbsQ, colorMode);
+        colors[3*i+0] = col.r; colors[3*i+1] = col.g; colors[3*i+2] = col.b;
+      }
+
+      clearCurrentObjects();
+
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      geometry.setIndex(indices);
+      if (indices.length > 0) {
+        geometry.computeVertexNormals();
+        geometry.computeBoundingSphere();
+      }
+
+      const material = new THREE.MeshStandardMaterial({
+        vertexColors:true, side:THREE.DoubleSide, roughness:0.56, metalness:0.02,
+        transparent:true, opacity:0.97, polygonOffset:true, polygonOffsetFactor:1, polygonOffsetUnits:1
+      });
+
+      state.mesh = new THREE.Mesh(geometry, material);
+      state.root.add(state.mesh);
+
+      if (document.getElementById('showWireframe').checked && indices.length > 0) {
+        const edgeGeom = new THREE.EdgesGeometry(geometry, 1);
+        const edgeMat = new THREE.LineBasicMaterial({ color:0x1f2937, transparent:true, opacity:0.4 });
+        state.edgeLines = new THREE.LineSegments(edgeGeom, edgeMat);
+        state.root.add(state.edgeLines);
+      }
+
+      if (document.getElementById('showNormals').checked && indices.length > 0) {
+        const helperSize = Math.max(0.03, (geometry.boundingSphere?.radius || 1) * 0.08);
+        state.normalsHelper = new VertexNormalsHelper(state.mesh, helperSize, 0x111111);
+        state.root.add(state.normalsHelper);
+      }
+
+      if (document.getElementById('showSections').checked) {
+        state.sectionsGroup = new THREE.Group();
+        const sxy = buildSectionLine(S, mode, globalScale, 'xy', 0xd6336c);
+        const sxz = buildSectionLine(S, mode, globalScale, 'xz', 0x1d4ed8);
+        const syz = buildSectionLine(S, mode, globalScale, 'yz', 0x0f766e);
+        [sxy, sxz, syz].filter(Boolean).forEach(line => state.sectionsGroup.add(line));
+        state.root.add(state.sectionsGroup);
+      }
+
+      axes.visible = document.getElementById('showAxes').checked;
+      grid.visible = document.getElementById('showGrid').checked;
+
+      state.boundsRadius = geometry.boundingSphere?.radius || 1;
+      if (state.firstBuild) {
+        fitCamera(state.boundsRadius);
+        state.firstBuild = false;
+      }
+
+      const asym = antisymmetricNorm(T);
+      const tris = Math.floor(indices.length / 3);
+      const warning =
+        asym > 1e-10
+          ? `Несимметричная часть ||A|| ≈ ${asym.toFixed(4)}; поверхность строится по симметрической части S = (T + Tᵀ) / 2.`
+          : 'Матрица симметрична или почти симметрична; поверхность совпадает с формой квадратичной формы.';
+
+      document.getElementById('summary').innerHTML =
+        `min q = <b>${minQ.toFixed(4)}</b>, max q = <b>${maxQ.toFixed(4)}</b>, max |q| = <b>${maxAbsQ.toFixed(4)}</b>, triangles = <b>${tris}</b><br>${warning}`;
+
+      requestRenderIfNotRequested();
+    }
+
+    function updateRangeLabels() {
+      document.getElementById('globalScaleLabel').textContent = Number(document.getElementById('globalScale').value).toFixed(2);
+      document.getElementById('uSegmentsLabel').textContent = document.getElementById('uSegments').value;
+      document.getElementById('vSegmentsLabel').textContent = document.getElementById('vSegments').value;
+      document.getElementById('levelClampLabel').textContent = Number(document.getElementById('levelClamp').value).toFixed(1);
+    }
+
+    function syncSymmetricInputs() {
+      if (!document.getElementById('symmetricMode').checked) return;
+      for (const [upper, lower] of symmetricPairs) {
+        const upperEl = document.getElementById(upper);
+        const lowerEl = document.getElementById(lower);
+        lowerEl.value = upperEl.value;
+        lowerEl.disabled = true;
+        lowerEl.classList.add('locked');
+      }
+    }
+
+    function setSymmetricUI(enabled) {
+      for (const [upper, lower] of symmetricPairs) {
+        const lowerEl = document.getElementById(lower);
+        lowerEl.disabled = enabled;
+        lowerEl.classList.toggle('locked', enabled);
+      }
+      if (enabled) syncSymmetricInputs();
+    }
+
+    function applyPreset(key) {
+      const preset = presets[key];
+      if (!preset) return;
+      document.getElementById('symmetricMode').checked = preset.symmetric;
+      setSymmetricUI(preset.symmetric);
+      writeMatrix(preset.T);
+      if (preset.symmetric) syncSymmetricInputs();
+      buildGeometryAndScene();
+      fitCamera(state.boundsRadius);
+    }
+
+    function bindInputs() {
+      document.getElementById('presetSelect').addEventListener('change', (e) => applyPreset(e.target.value));
+      document.getElementById('resetCamera').addEventListener('click', () => { fitCamera(state.boundsRadius); requestRenderIfNotRequested(); });
+
+      document.getElementById('surfaceMode').addEventListener('change', () => {
+        const showClamp = document.getElementById('surfaceMode').value === 'level-set';
+        document.getElementById('levelClampRow').style.display = showClamp ? 'grid' : 'none';
+        buildGeometryAndScene();
+      });
+
+      document.getElementById('symmetricMode').addEventListener('change', (e) => {
+        setSymmetricUI(e.target.checked);
+        buildGeometryAndScene();
+      });
+
+      const watchedIds = [
+        'globalScale','uSegments','vSegments','colormap','signedColors',
+        'showAxes','showGrid','showWireframe','showNormals','showSections','levelClamp'
+      ];
+
+      watchedIds.forEach((id) => {
+        document.getElementById(id).addEventListener('input', () => { updateRangeLabels(); buildGeometryAndScene(); });
+        document.getElementById(id).addEventListener('change', () => { updateRangeLabels(); buildGeometryAndScene(); });
+      });
+
+      ids.flat().forEach((id) => {
+        document.getElementById(id).addEventListener('input', () => { syncSymmetricInputs(); buildGeometryAndScene(); });
+        document.getElementById(id).addEventListener('change', () => { syncSymmetricInputs(); buildGeometryAndScene(); });
+      });
+    }
+
+    setSymmetricUI(true);
+    updateRangeLabels();
+    bindInputs();
+    applyPreset('spd');
+    requestRenderIfNotRequested();
+  </script>
+</body>
+</html>
